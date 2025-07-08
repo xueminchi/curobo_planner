@@ -22,27 +22,28 @@ import torch
 a = torch.zeros(4, device="cuda:0")
 
 # Standard Library
-import argparse
+import argparse  # 解析命令行参数
 
-parser = argparse.ArgumentParser()
-
-parser.add_argument(
-    "--headless_mode",
-    type=str,
-    default=None,
-    help="To run headless, use one of [native, websocket], webrtc might not work.",
-)
-parser.add_argument(
-    "--visualize_spheres",
-    action="store_true",
-    help="When True, visualizes robot spheres",
-    default=False,
-)
+parser = argparse.ArgumentParser()  # 创建解析器
 
 parser.add_argument(
-    "--robot", type=str, default="dual_ur10e.yml", help="robot configuration to load"
+    "--headless_mode",  # 是否在无头模式下运行
+    type=str,  # 参数类型
+    default=None,  # 默认值
+    help="To run headless, use one of [native, websocket], webrtc might not work.",  # 帮助信息
 )
-args = parser.parse_args()
+parser.add_argument(
+    "--visualize_spheres",  # 是否可视化机器人球体
+    action="store_true",  # 布尔值
+    help="When True, visualizes robot spheres",  # 帮助信息
+    default=False,  # 默认值
+)
+
+parser.add_argument(
+    "--robot", type=str, default="dual_ur10e.yml", help="robot configuration to load"  # 机器人配置文件
+)  # 默认会使用dual_ur10e.yml
+
+args = parser.parse_args()  # 解析参数
 
 ############################################################
 
@@ -57,17 +58,17 @@ simulation_app = SimulationApp(
     }
 )
 # Third Party
-import carb
-import numpy as np
-from helper import add_extensions, add_robot_to_scene
-from omni.isaac.core import World
-from omni.isaac.core.objects import cuboid, sphere
+import carb  # 用来记录日志  
+import numpy as np  # 用来处理数组
+from helper import add_extensions, add_robot_to_scene  # 用来添加机器人到场景
+from omni.isaac.core import World  # 用来创建世界
+from omni.isaac.core.objects import cuboid, sphere  # 用来创建物体
 
 ########### OV #################
-from omni.isaac.core.utils.types import ArticulationAction
+from omni.isaac.core.utils.types import ArticulationAction  # 用来创建关节动作
 
 # CuRobo
-from curobo.cuda_robot_model.cuda_robot_model import CudaRobotModel
+from curobo.cuda_robot_model.cuda_robot_model import CudaRobotModel  # 用来创建机器人模型
 
 # from curobo.wrap.reacher.ik_solver import IKSolver, IKSolverConfig
 from curobo.geom.sdf.world import CollisionCheckerType
