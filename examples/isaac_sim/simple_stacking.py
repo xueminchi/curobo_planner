@@ -428,9 +428,9 @@ class MultiModalStacking(BaseStacking):
         )
 
 
-robot_prim_path = "/World/Franka/panda_link0"
-ignore_substring = ["Franka", "TargetCube", "material", "Plane"]
-my_world = World(stage_units_in_meters=1.0)
+robot_prim_path = "/World/Franka/panda_link0"  # 机器人基座, prim 是指在USD中定义的物体
+ignore_substring = ["Franka", "TargetCube", "material", "Plane"]  # 忽略的物体
+my_world = World(stage_units_in_meters=1.0)  # 世界，包含所有物体， stage_units_in_meters=1.0 表示使用米作为单位
 stage = my_world.stage
 stage.SetDefaultPrim(stage.GetPrimAtPath("/World"))
 
@@ -491,7 +491,7 @@ i = 0
 
 add_extensions(simulation_app, args.headless_mode)
 
-while simulation_app.is_running():
+while simulation_app.is_running():  #控制器开始运行
     my_world.step(render=True)  # necessary to visualize changes
     i += 1
 

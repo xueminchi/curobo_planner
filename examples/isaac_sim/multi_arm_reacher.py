@@ -62,13 +62,13 @@ import carb  # 用来记录日志
 import numpy as np  # 用来处理数组
 from helper import add_extensions, add_robot_to_scene  # 用来添加机器人到场景
 from omni.isaac.core import World  # 用来创建世界
-from omni.isaac.core.objects import cuboid, sphere  # 用来创建物体
+from omni.isaac.core.objects import cuboid, sphere
 
 ########### OV #################
-from omni.isaac.core.utils.types import ArticulationAction  # 用来创建关节动作
+from omni.isaac.core.utils.types import ArticulationAction
 
 # CuRobo
-from curobo.cuda_robot_model.cuda_robot_model import CudaRobotModel  # 用来创建机器人模型
+from curobo.cuda_robot_model.cuda_robot_model import CudaRobotModel
 
 # from curobo.wrap.reacher.ik_solver import IKSolver, IKSolverConfig
 from curobo.geom.sdf.world import CollisionCheckerType
