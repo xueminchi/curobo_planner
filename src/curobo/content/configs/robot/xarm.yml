@@ -11,17 +11,17 @@
 
 robot_cfg:  # 机器人配置
   kinematics:  # 运动学配置
-    usd_path: "FILL_THIS"  # 机器人模型文件路径
+    usd_path: "robot/xarm/xarm7_with_gripper.usd"  # 机器人模型文件路径
     usd_robot_root: "/robot"  # 机器人模型根节点
     isaac_usd_path: ""  # 机器人模型文件路径
     usd_flip_joints: {}  # 机器人关节翻转配置
     usd_flip_joint_limits: []  # 机器人关节翻转限制
 
-    urdf_path: "FILL_THIS"  # 机器人模型文件路径
-    asset_root_path: ""  # 机器人模型文件路径
+    urdf_path: "robot/xarm/xarm7_with_gripper.urdf"  # 机器人模型文件路径
+    asset_root_path: "robot/xarm"  # 机器人模型文件路径
     
-    base_link: "FILL_THIS"  # 机器人基座
-    ee_link: "FILL_THIS"  # 机器人末端执行器
+    base_link: "link_base"  # 机器人基座
+    ee_link: "link_eef"  # 机器人末端执行器
     link_names: null  # 机器人关节名称
     lock_joints: null  # 机器人关节锁定配置
     extra_links: null  # 机器人额外链接配置
@@ -39,9 +39,9 @@ robot_cfg:  # 机器人配置
     external_asset_path: null # Use this to add path for externally located assets/robot folder.
 
     cspace:
-      joint_names: [] # List[str]
-      retract_config: null # List[float]
-      null_space_weight: null # List[str]
-      cspace_distance_weight: null # List[str]
+      joint_names: ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6', 'joint7'] # List[str]
+      retract_config: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] # List[float]
+      null_space_weight: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # List[str]
+      cspace_distance_weight: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # List[str]
       max_jerk: 500.0
       max_acceleration: 15.0
