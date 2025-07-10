@@ -95,7 +95,7 @@ def main():
     )
 
     setup_curobo_logger("warn")
-    past_pose = None
+    past_pose = None  # 
     n_obstacle_cuboids = 30
     n_obstacle_mesh = 100
 
@@ -118,16 +118,17 @@ def main():
 
     # 配置世界碰撞检测
     world_cfg_table = WorldConfig.from_dict(
-        load_yaml(join_path(get_world_configs_path(), "collision_table.yml"))
+        load_yaml(join_path(get_world_configs_path(), "collision_table_modified.yml"))
     )
     world_cfg_table.cuboid[0].pose[2] -= 0.02  #  桌子的高度减去0.02米
+
     world_cfg1 = WorldConfig.from_dict(
-        load_yaml(join_path(get_world_configs_path(), "collision_table.yml"))
+        load_yaml(join_path(get_world_configs_path(), "collision_table_modified.yml"))
     ).get_mesh_world()
     world_cfg1.mesh[0].name += "_mesh"  # 桌子的高度减去10.5米，并添加后缀_mesh
     # world_cfg1.mesh[0].pose[2] = 0
     # 调整一下桌子的size，太大了
-    world_cfg1.mesh[0].pose[:3] = [2.65, 2.65, 0.5]
+    world_cfg1.mesh[0].pose[:3] = [1.35, 1.0, 0.5]
     world_cfg = WorldConfig(cuboid=world_cfg_table.cuboid, mesh=world_cfg1.mesh)  # 创建世界配置
 
     # 运动生成配置
@@ -153,7 +154,7 @@ def main():
         trajopt_tsteps=trajopt_tsteps,
         trim_steps=trim_steps,
     )
-    
+
     motion_gen = MotionGen(motion_gen_config)
     
     print("warming up...")
@@ -164,11 +165,11 @@ def main():
     add_extensions(simulation_app, None)
 
     plan_config = MotionGenPlanConfig(
-        enable_graph=False,
-        enable_graph_attempt=2,
-        max_attempts=max_attempts,
-        enable_finetune_trajopt=enable_finetune_trajopt,
-        time_dilation_factor=0.5,
+        enable_graph=False,  # 默认不使用图搜索
+        enable_graph_attempt=2,  # 如果失败，则会尝试使用图搜索
+        max_attempts=max_attempts,  # 最大尝试次数
+        enable_finetune_trajopt=enable_finetune_trajopt,  #  是否开启轨迹优化
+        time_dilation_factor=0.5,  # 时间膨胀因子，用来调整轨迹的执行速度
     )
 
     usd_help.load_stage(my_world.stage)
@@ -193,8 +194,10 @@ def main():
             continue
 
         step_index = my_world.current_time_step_index
+        
         if articulation_controller is None:
             articulation_controller = robot.get_articulation_controller()
+
         if step_index < 10:
             robot._articulation_view.initialize()
             idx_list = [robot.get_dof_index(x) for x in j_names]
@@ -203,6 +206,7 @@ def main():
             robot._articulation_view.set_max_efforts(
                 values=np.array([5000 for i in range(len(idx_list))]), joint_indices=idx_list
             )
+            
         if step_index < 20:
             continue
 
@@ -218,7 +222,7 @@ def main():
                     "/curobo",
                 ],
             ).get_collision_check_world()
-            print(len(obstacles.objects))
+            print('The num. of obstacles:', len(obstacles.objects))
 
             motion_gen.update_world(obstacles)
             print("Updated World")
@@ -227,6 +231,7 @@ def main():
         # 获取目标立方体的位置和方向
         cube_position, cube_orientation = target.get_world_pose()
 
+        # 设置机械臂执行器末端的位置和方向
         if past_pose is None:
             past_pose = cube_position
         if target_pose is None:
@@ -237,9 +242,11 @@ def main():
             past_orientation = cube_orientation
 
         sim_js = robot.get_joints_state()
+
         if sim_js is None:
             print("sim_js is None")
             continue
+
         sim_js_names = robot.dof_names
         if np.any(np.isnan(sim_js.positions)):
             log_error("isaac sim has returned NAN joint position values.")
@@ -258,34 +265,38 @@ def main():
 
         # 检查机器人是否静止
         robot_static = False
-        if np.max(np.abs(sim_js.velocities)) < 0.5:
+        if np.max(np.abs(sim_js.velocities)) < 0.5:  # 如果机器人的速度小于0.5米/秒，则认为机器人是静止的
             robot_static = True
             
         # 检查是否需要规划新路径
         if (
             (
-                np.linalg.norm(cube_position - target_pose) > 1e-3
+                np.linalg.norm(cube_position - target_pose) > 1e-3  #
                 or np.linalg.norm(cube_orientation - target_orientation) > 1e-3
             )
             and np.linalg.norm(past_pose - cube_position) == 0.0
             and np.linalg.norm(past_orientation - cube_orientation) == 0.0
-            and robot_static
+            and robot_static  # 需要机器人的状态为静止， 才会进行规划
         ):
             # 设置末端执行器目标
             ee_translation_goal = cube_position
             ee_orientation_teleop_goal = cube_orientation
 
             # 计算curobo解
-            ik_goal = Pose(
+            ik_goal = Pose(  # 数据的格式需要进行转换
                 position=tensor_args.to_device(ee_translation_goal),
                 quaternion=tensor_args.to_device(ee_orientation_teleop_goal),
-            )
-            plan_config.pose_cost_metric = pose_metric
-            result = motion_gen.plan_single(cu_js.unsqueeze(0), ik_goal, plan_config)
-
+            )  
+            
+            plan_config.pose_cost_metric = pose_metric  # 对姿态进行约束，然后设置权重，可以为none
+            
+            # 调用curobo的plan_single函数，进行规划
+            result = motion_gen.plan_single(cu_js.unsqueeze(0), ik_goal, plan_config)  # cu_js: shape (1, 7)
+            
+            # 从 result 里面拿结果
             succ = result.success.item()
             if succ:
-                num_targets += 1
+                num_targets += 1  #
                 cmd_plan = result.get_interpolated_plan()
                 cmd_plan = motion_gen.get_full_js(cmd_plan)
                 
@@ -318,6 +329,7 @@ def main():
                 cmd_state.velocity.cpu().numpy(),
                 joint_indices=idx_list,
             )
+
             # 设置从IK获得的期望关节角度
             articulation_controller.apply_action(art_action)
             cmd_idx += 1

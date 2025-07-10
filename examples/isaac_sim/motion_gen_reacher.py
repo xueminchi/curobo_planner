@@ -291,12 +291,13 @@ def main():
                 only_paths=["/World"],
                 reference_prim_path=robot_prim_path,
                 ignore_substring=[
-                    robot_prim_path,
-                    "/World/target",
-                    "/World/defaultGroundPlane",
-                    "/curobo",
+                    robot_prim_path,  # 忽略机器人本身
+                    "/World/target",  # 忽略目标立方体
+                    "/World/defaultGroundPlane",  # 忽略地面
+                    "/curobo",  # 忽略curobo
                 ],
-            ).get_collision_check_world()
+            ).get_collision_check_world()  # 返回一个CollisionCheckWorld对象，里面有障碍物的位置，障碍物的形状，障碍物的尺寸等
+
             print(len(obstacles.objects))
 
             motion_gen.update_world(obstacles)
@@ -439,6 +440,7 @@ def main():
                 cmd_idx = 0
                 cmd_plan = None
                 past_cmd = None
+
     simulation_app.close()
 
 
