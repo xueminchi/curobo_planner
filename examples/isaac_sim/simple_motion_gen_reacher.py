@@ -1,54 +1,39 @@
-#
-# Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-#
-# NVIDIA CORPORATION, its affiliates and licensors retain all intellectual
-# property and proprietary rights in and to this material, related
-# documentation and any modifications thereto. Any use, reproduction,
-# disclosure or distribution of this material and related documentation
-# without an express license agreement from NVIDIA CORPORATION or
-# its affiliates is strictly prohibited.
-#
+#!/usr/bin/env python3
+"""
+Simplified Motion Generation Example for Isaac Sim with CuRobo
+简化的Isaac Sim与CuRobo运动生成示例
+
+This script demonstrates basic motion planning with a Franka robot.
+本脚本展示使用Franka机器人的基本运动规划。
+
+Usage: omni_python simple_motion_gen_reacher.py
+"""
 
 try:
-    # Third Party
     import isaacsim
 except ImportError:
     pass
 
-# Third Party
 import torch
-
 a = torch.zeros(4, device="cuda:0")
 
-############################################################
-
-# Third Party
 from omni.isaac.kit import SimulationApp
+simulation_app = SimulationApp({
+    "headless": False,  # Set to True for headless mode
+    "width": "1920",
+    "height": "1080",
+})
 
-simulation_app = SimulationApp(
-    {
-        "headless": False,
-        "width": "1920",
-        "height": "1080",
-    }
-)
-
-# Standard Library
-from typing import Dict
-
-# Third Party
-import carb  # 用来打印日志
 import numpy as np
+import carb
 from helper import add_extensions, add_robot_to_scene
 from omni.isaac.core import World
-from omni.isaac.core.objects import cuboid
-
-########### OV #################
+from omni.isaac.core.objects import cuboid, sphere
 from omni.isaac.core.utils.types import ArticulationAction
 
-# CuRobo
+# CuRobo imports
 from curobo.geom.sdf.world import CollisionCheckerType
-from curobo.geom.types import WorldConfig
+from curobo.geom.types import WorldConfig, Mesh
 from curobo.types.base import TensorDeviceType
 from curobo.types.math import Pose
 from curobo.types.robot import JointState
@@ -57,8 +42,6 @@ from curobo.util.logger import log_error, setup_curobo_logger
 from curobo.util.usd_helper import UsdHelper
 from curobo.util_file import (
     get_assets_path,
-    get_filename,
-    get_path_of_dir,
     get_robot_configs_path,
     get_world_configs_path,
     join_path,
@@ -74,64 +57,71 @@ from curobo.wrap.reacher.motion_gen import (
 ############################################################
 
 def main():
-    # 创建curobo运动生成实例
-    num_targets = 0
+    """Main function to run the motion generation example"""
     
-    # 创建世界
-    my_world = World(stage_units_in_meters=1.0)  # 世界里面的单位是米
-    stage = my_world.stage  # 获取世界stage，stage是usd的根节点
+    # Initialize world and stage
+    my_world = World(stage_units_in_meters=1.0)
+    stage = my_world.stage
 
-    xform = stage.DefinePrim("/World", "Xform")  # 在stage里面创建一个根节点，名字叫World
-    stage.SetDefaultPrim(xform)  # 设置默认的prim为xform，Prim 是usd的基类，Xform是prim的子类，Xform是用来表示变换的
-    stage.DefinePrim("/curobo", "Xform")  # 在stage里面创建一个节点，名字叫curobo，类型为Xform
+    # Setup basic scene structure
+    xform = stage.DefinePrim("/World", "Xform")
+    stage.SetDefaultPrim(xform)
+    stage.DefinePrim("/curobo", "Xform")
 
-    # 创建目标立方体
+    # Create target cube for robot to reach
     target = cuboid.VisualCuboid(
-        "/World/target",  # 目标立方体是World的子节点，名字叫target
+        "/World/target",
         position=np.array([0.5, 0, 0.5]),
         orientation=np.array([0, 1, 0, 0]),
-        color=np.array([1.0, 0, 0]),  # 颜色是红色
+        color=np.array([1.0, 0, 0]),  # Red color
         size=0.05,
     )
 
+    # Setup logging and variables
     setup_curobo_logger("warn")
-    past_pose = None  # 
+    past_pose = None
     n_obstacle_cuboids = 30
     n_obstacle_mesh = 100
-
-    # 初始化curobo实例
     usd_help = UsdHelper()
     target_pose = None
-
     tensor_args = TensorDeviceType()
     
-    # 默认加载franka机器人
+    # Load robot configuration
     robot_cfg_path = get_robot_configs_path()
-    robot_cfg = load_yaml(join_path(robot_cfg_path, "franka.yml"))["robot_cfg"]  # 通过yaml文件来加载机器人配置
-    
-    j_names = robot_cfg["kinematics"]["cspace"]["joint_names"]  # 关节名称
-    default_config = robot_cfg["kinematics"]["cspace"]["retract_config"]  # 默认配置
+    robot_cfg = load_yaml(join_path(robot_cfg_path, "franka.yml"))["robot_cfg"]
+    j_names = robot_cfg["kinematics"]["cspace"]["joint_names"]
+    default_config = robot_cfg["kinematics"]["cspace"]["retract_config"]
 
-    robot, robot_prim_path = add_robot_to_scene(robot_cfg, my_world)  # 添加机器人到世界
-
+    robot, robot_prim_path = add_robot_to_scene(robot_cfg, my_world)
     articulation_controller = None
 
-    # 配置世界碰撞检测
+    # Load world configuration (table only)
     world_cfg_table = WorldConfig.from_dict(
-        load_yaml(join_path(get_world_configs_path(), "collision_table_modified.yml"))
+        load_yaml(join_path(get_world_configs_path(), "collision_table.yml"))
     )
-    world_cfg_table.cuboid[0].pose[2] -= 0.02  #  桌子的高度减去0.02米
+    world_cfg_table.cuboid[0].pose[2] -= 0.02  # Lower table height by 0.02m
 
+    # Create mesh version of the table for collision detection
     world_cfg1 = WorldConfig.from_dict(
-        load_yaml(join_path(get_world_configs_path(), "collision_table_modified.yml"))
+        load_yaml(join_path(get_world_configs_path(), "collision_table.yml"))
     ).get_mesh_world()
-    world_cfg1.mesh[0].name += "_mesh"  # 桌子的高度减去10.5米，并添加后缀_mesh
-    # world_cfg1.mesh[0].pose[2] = 0
-    # 调整一下桌子的size，太大了
-    world_cfg1.mesh[0].pose[:3] = [1.35, 1.0, 0.5]
-    world_cfg = WorldConfig(cuboid=world_cfg_table.cuboid, mesh=world_cfg1.mesh)  # 创建世界配置
+    world_cfg1.mesh[0].name += "_mesh"
+    world_cfg1.mesh[0].pose[2] = -10.5  # Move mesh table far below
 
-    # 运动生成配置
+    # Combine cuboid and mesh configurations
+    world_cfg = WorldConfig(cuboid=world_cfg_table.cuboid, mesh=world_cfg1.mesh)
+
+    # Path to arm_l.obj file
+    abs_mesh_path = join_path(get_assets_path(), "scene/arm_l.obj")
+    
+    # Debug: Check if file exists
+    import os
+    if os.path.exists(abs_mesh_path):
+        print(f"✓ Found arm_l.obj at: {abs_mesh_path}")
+    else:
+        print(f"✗ arm_l.obj not found at: {abs_mesh_path}")
+
+    # Motion generation configuration
     trajopt_dt = None
     optimize_dt = True
     trajopt_tsteps = 32
@@ -139,16 +129,16 @@ def main():
     max_attempts = 4
     interpolation_dt = 0.05
     enable_finetune_trajopt = True
-    
+
     motion_gen_config = MotionGenConfig.load_from_robot_config(
-        robot_cfg,  # 添加机器人配置文件，里面有机器人的关节名称，关节限制，关节类型，关节位置，关节速度，关节加速度，关节力矩等
-        world_cfg,  # 添加世界配置文件，里面有障碍物的位置，障碍物的形状，障碍物的尺寸等
-        tensor_args,  # 添加tensor配置文件，里面有tensor的设备类型，tensor的精度等  
-        collision_checker_type=CollisionCheckerType.MESH,  # 添加碰撞检测类型，这里使用的是mesh碰撞检测
-        num_trajopt_seeds=12,  # 添加trajopt种子数，这里使用的是12个种子
-        num_graph_seeds=12,  # 添加graph种子数，这里使用的是12个种子
-        interpolation_dt=interpolation_dt,  # 添加插值时间，这里使用的是0.05秒
-        collision_cache={"obb": n_obstacle_cuboids, "mesh": n_obstacle_mesh},  # 添加碰撞缓存，这里使用的是10个障碍物
+        robot_cfg,
+        world_cfg,
+        tensor_args,
+        collision_checker_type=CollisionCheckerType.MESH,
+        num_trajopt_seeds=12,
+        num_graph_seeds=12,
+        interpolation_dt=interpolation_dt,
+        collision_cache={"obb": n_obstacle_cuboids, "mesh": n_obstacle_mesh},
         optimize_dt=optimize_dt,
         trajopt_dt=trajopt_dt,
         trajopt_tsteps=trajopt_tsteps,
@@ -156,30 +146,55 @@ def main():
     )
 
     motion_gen = MotionGen(motion_gen_config)
-    
-    print("warming up...")
-    motion_gen.warmup(enable_graph=True, warmup_js_trajopt=False)
 
-    print("Curobo is Ready")
+    # Add world configuration to stage
+    print("Adding world configuration to stage...")
+    usd_help.load_stage(my_world.stage)
+    usd_help.add_world_to_stage(world_cfg, base_frame="/World")
+    print("✓ World configuration added successfully")
+
+    # Add arm_l.obj mesh for visualization (WORKING method)
+    print(f"\nAdding arm_l.obj mesh for visualization...")
+    try:
+        # Create mesh object
+        arm_mesh = Mesh(
+            name="arm_l_mesh",
+            pose=[0.6, 0.3, 0.2, 1, 0, 0, 0],  # Position: x=0.6m, y=0.3m, z=0.2m
+            file_path=abs_mesh_path,
+            scale=[1.0, 1.0, 1.0],  # No scaling needed (file is correct size)
+            color=[0.0, 1.0, 0.0, 1.0]  # Green color
+        )
+        
+        # Add mesh to stage using direct method (proven working)
+        mesh_path = usd_help.add_mesh_to_stage(arm_mesh, base_frame="/World")
+        print(f"✓ arm_l.obj added successfully!")
+        print(f"  USD Path: {mesh_path}")
+        print(f"  Position: [0.6, 0.3, 0.2] (GREEN)")
+        print(f"  File size: 12.3cm max dimension")
+        
+    except Exception as e:
+        print(f"✗ Failed to add arm_l.obj mesh: {e}")
+
+    # Perform Motion Generation warmup
+    print("\nWarming up Motion Generation...")
+    motion_gen.warmup(enable_graph=True, warmup_js_trajopt=False)
+    print("✓ CuRobo is ready!")
 
     add_extensions(simulation_app, None)
 
     plan_config = MotionGenPlanConfig(
-        enable_graph=False,  # 默认不使用图搜索
-        enable_graph_attempt=2,  # 如果失败，则会尝试使用图搜索
-        max_attempts=max_attempts,  # 最大尝试次数
-        enable_finetune_trajopt=enable_finetune_trajopt,  #  是否开启轨迹优化
-        time_dilation_factor=0.5,  # 时间膨胀因子，用来调整轨迹的执行速度
+        enable_graph=False,
+        enable_graph_attempt=2,
+        max_attempts=max_attempts,
+        enable_finetune_trajopt=enable_finetune_trajopt,
+        time_dilation_factor=0.5,
     )
 
-    usd_help.load_stage(my_world.stage)
-    usd_help.add_world_to_stage(world_cfg, base_frame="/World")
-
+    # Main simulation loop
     cmd_plan = None
     cmd_idx = 0
     my_world.scene.add_default_ground_plane()
     i = 0
-    spheres = None
     past_cmd = None
     target_orientation = None
     past_orientation = None
@@ -198,11 +213,11 @@ def main():
         if articulation_controller is None:
             articulation_controller = robot.get_articulation_controller()
 
+        # Initialize robot joints
         if step_index < 10:
             robot._articulation_view.initialize()
             idx_list = [robot.get_dof_index(x) for x in j_names]
             robot.set_joint_positions(default_config, idx_list)
-
             robot._articulation_view.set_max_efforts(
                 values=np.array([5000 for i in range(len(idx_list))]), joint_indices=idx_list
             )
@@ -210,8 +225,9 @@ def main():
         if step_index < 20:
             continue
 
+        # Update world obstacles periodically
         if step_index == 50 or step_index % 1000 == 0.0:
-            print("Updating world, reading w.r.t.", robot_prim_path)
+            print("Updating world obstacles...")
             obstacles = usd_help.get_obstacles_from_stage(
                 only_paths=["/World"],
                 reference_prim_path=robot_prim_path,
@@ -222,16 +238,14 @@ def main():
                     "/curobo",
                 ],
             ).get_collision_check_world()
-            print('The num. of obstacles:', len(obstacles.objects))
-
+            print(f"Found {len(obstacles.objects)} obstacles")
             motion_gen.update_world(obstacles)
-            print("Updated World")
-            carb.log_info("Synced CuRobo world from stage.")
+            print("✓ World updated")
 
-        # 获取目标立方体的位置和方向
+        # Get target cube position and orientation
         cube_position, cube_orientation = target.get_world_pose()
 
-        # 设置机械臂执行器末端的位置和方向
+        # Initialize pose tracking variables
         if past_pose is None:
             past_pose = cube_position
         if target_pose is None:
@@ -241,15 +255,17 @@ def main():
         if past_orientation is None:
             past_orientation = cube_orientation
 
+        # Get current robot joint state
         sim_js = robot.get_joints_state()
-
         if sim_js is None:
-            print("sim_js is None")
+            print("Warning: sim_js is None")
             continue
-
+            
         sim_js_names = robot.dof_names
         if np.any(np.isnan(sim_js.positions)):
-            log_error("isaac sim has returned NAN joint position values.")
+            log_error("Isaac Sim returned NaN joint position values")
+            
+        # Convert to CuRobo joint state format
         cu_js = JointState(
             position=tensor_args.to_device(sim_js.positions),
             velocity=tensor_args.to_device(sim_js.velocities),
@@ -257,89 +273,80 @@ def main():
             jerk=tensor_args.to_device(sim_js.velocities) * 0.0,
             joint_names=sim_js_names,
         )
-
         cu_js.velocity *= 0.0
         cu_js.acceleration *= 0.0
-
         cu_js = cu_js.get_ordered_joint_state(motion_gen.kinematics.joint_names)
 
-        # 检查机器人是否静止
-        robot_static = False
-        if np.max(np.abs(sim_js.velocities)) < 0.5:  # 如果机器人的速度小于0.5米/秒，则认为机器人是静止的
-            robot_static = True
+        # Check if robot is static and target has moved
+        robot_static = (np.max(np.abs(sim_js.velocities)) < 0.5)
+        target_moved = (
+            (np.linalg.norm(cube_position - target_pose) > 1e-3 or 
+             np.linalg.norm(cube_orientation - target_orientation) > 1e-3) and
+            np.linalg.norm(past_pose - cube_position) == 0.0 and
+            np.linalg.norm(past_orientation - cube_orientation) == 0.0
+        )
+        
+        if target_moved and robot_static:
+            # Plan motion to new target position
+            print(f"Planning motion to target: {cube_position}")
             
-        # 检查是否需要规划新路径
-        if (
-            (
-                np.linalg.norm(cube_position - target_pose) > 1e-3  #
-                or np.linalg.norm(cube_orientation - target_orientation) > 1e-3
+            ik_goal = Pose(
+                position=tensor_args.to_device(cube_position),
+                quaternion=tensor_args.to_device(cube_orientation),
             )
-            and np.linalg.norm(past_pose - cube_position) == 0.0
-            and np.linalg.norm(past_orientation - cube_orientation) == 0.0
-            and robot_static  # 需要机器人的状态为静止， 才会进行规划
-        ):
-            # 设置末端执行器目标
-            ee_translation_goal = cube_position
-            ee_orientation_teleop_goal = cube_orientation
-
-            # 计算curobo解
-            ik_goal = Pose(  # 数据的格式需要进行转换
-                position=tensor_args.to_device(ee_translation_goal),
-                quaternion=tensor_args.to_device(ee_orientation_teleop_goal),
-            )  
             
-            plan_config.pose_cost_metric = pose_metric  # 对姿态进行约束，然后设置权重，可以为none
+            plan_config.pose_cost_metric = pose_metric
+            result = motion_gen.plan_single(cu_js.unsqueeze(0), ik_goal, plan_config)
             
-            # 调用curobo的plan_single函数，进行规划
-            result = motion_gen.plan_single(cu_js.unsqueeze(0), ik_goal, plan_config)  # cu_js: shape (1, 7)
-            
-            # 从 result 里面拿结果
-            succ = result.success.item()
-            if succ:
-                num_targets += 1  #
+            if result.success.item():
+                print("✓ Motion plan successful")
                 cmd_plan = result.get_interpolated_plan()
                 cmd_plan = motion_gen.get_full_js(cmd_plan)
                 
-                # 获取共同的关节名称
+                # Get common joint names between simulation and plan
                 idx_list = []
                 common_js_names = []
                 for x in sim_js_names:
                     if x in cmd_plan.joint_names:
                         idx_list.append(robot.get_dof_index(x))
                         common_js_names.append(x)
-
+                
                 cmd_plan = cmd_plan.get_ordered_joint_state(common_js_names)
                 cmd_idx = 0
             else:
-                carb.log_warn("Plan did not converge to a solution: " + str(result.status))
+                print(f"✗ Motion planning failed: {result.status}")
+                
             target_pose = cube_position
             target_orientation = cube_orientation
             
         past_pose = cube_position
         past_orientation = cube_orientation
         
-        # 执行规划的命令
+        # Execute planned motion
         if cmd_plan is not None:
             cmd_state = cmd_plan[cmd_idx]
             past_cmd = cmd_state.clone()
             
-            # 获取完整的自由度状态
+            # Apply joint commands to robot
             art_action = ArticulationAction(
                 cmd_state.position.cpu().numpy(),
                 cmd_state.velocity.cpu().numpy(),
                 joint_indices=idx_list,
             )
-
-            # 设置从IK获得的期望关节角度
             articulation_controller.apply_action(art_action)
             cmd_idx += 1
+            
+            # Additional simulation steps for smoother motion
             for _ in range(2):
                 my_world.step(render=False)
+                
+            # Check if plan execution is complete
             if cmd_idx >= len(cmd_plan.position):
                 cmd_idx = 0
                 cmd_plan = None
                 past_cmd = None
-                
+                print("✓ Motion execution complete")
+
     simulation_app.close()
 
 if __name__ == "__main__":
