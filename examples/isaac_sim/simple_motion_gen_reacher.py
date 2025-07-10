@@ -37,11 +37,11 @@ simulation_app = SimulationApp(
 from typing import Dict
 
 # Third Party
-import carb
+import carb  # 用来打印日志
 import numpy as np
 from helper import add_extensions, add_robot_to_scene
 from omni.isaac.core import World
-from omni.isaac.core.objects import cuboid, sphere
+from omni.isaac.core.objects import cuboid
 
 ########### OV #################
 from omni.isaac.core.utils.types import ArticulationAction
@@ -78,19 +78,19 @@ def main():
     num_targets = 0
     
     # 创建世界
-    my_world = World(stage_units_in_meters=1.0)
-    stage = my_world.stage
+    my_world = World(stage_units_in_meters=1.0)  # 世界里面的单位是米
+    stage = my_world.stage  # 获取世界stage，stage是usd的根节点
 
-    xform = stage.DefinePrim("/World", "Xform")
-    stage.SetDefaultPrim(xform)
-    stage.DefinePrim("/curobo", "Xform")
+    xform = stage.DefinePrim("/World", "Xform")  # 在stage里面创建一个根节点，名字叫World
+    stage.SetDefaultPrim(xform)  # 设置默认的prim为xform，Prim 是usd的基类，Xform是prim的子类，Xform是用来表示变换的
+    stage.DefinePrim("/curobo", "Xform")  # 在stage里面创建一个节点，名字叫curobo，类型为Xform
 
     # 创建目标立方体
     target = cuboid.VisualCuboid(
-        "/World/target",
+        "/World/target",  # 目标立方体是World的子节点，名字叫target
         position=np.array([0.5, 0, 0.5]),
         orientation=np.array([0, 1, 0, 0]),
-        color=np.array([1.0, 0, 0]),
+        color=np.array([1.0, 0, 0]),  # 颜色是红色
         size=0.05,
     )
 
@@ -107,12 +107,12 @@ def main():
     
     # 默认加载franka机器人
     robot_cfg_path = get_robot_configs_path()
-    robot_cfg = load_yaml(join_path(robot_cfg_path, "franka.yml"))["robot_cfg"]
+    robot_cfg = load_yaml(join_path(robot_cfg_path, "franka.yml"))["robot_cfg"]  # 通过yaml文件来加载机器人配置
     
-    j_names = robot_cfg["kinematics"]["cspace"]["joint_names"]
-    default_config = robot_cfg["kinematics"]["cspace"]["retract_config"]
+    j_names = robot_cfg["kinematics"]["cspace"]["joint_names"]  # 关节名称
+    default_config = robot_cfg["kinematics"]["cspace"]["retract_config"]  # 默认配置
 
-    robot, robot_prim_path = add_robot_to_scene(robot_cfg, my_world)
+    robot, robot_prim_path = add_robot_to_scene(robot_cfg, my_world)  # 添加机器人到世界
 
     articulation_controller = None
 
@@ -120,14 +120,15 @@ def main():
     world_cfg_table = WorldConfig.from_dict(
         load_yaml(join_path(get_world_configs_path(), "collision_table.yml"))
     )
-    world_cfg_table.cuboid[0].pose[2] -= 0.02
+    world_cfg_table.cuboid[0].pose[2] -= 0.02  #  桌子的高度减去0.02米
     world_cfg1 = WorldConfig.from_dict(
         load_yaml(join_path(get_world_configs_path(), "collision_table.yml"))
     ).get_mesh_world()
-    world_cfg1.mesh[0].name += "_mesh"
-    world_cfg1.mesh[0].pose[2] = -10.5
-
-    world_cfg = WorldConfig(cuboid=world_cfg_table.cuboid, mesh=world_cfg1.mesh)
+    world_cfg1.mesh[0].name += "_mesh"  # 桌子的高度减去10.5米，并添加后缀_mesh
+    # world_cfg1.mesh[0].pose[2] = 0
+    # 调整一下桌子的size，太大了
+    world_cfg1.mesh[0].pose[:3] = [2.65, 2.65, 0.5]
+    world_cfg = WorldConfig(cuboid=world_cfg_table.cuboid, mesh=world_cfg1.mesh)  # 创建世界配置
 
     # 运动生成配置
     trajopt_dt = None
@@ -139,19 +140,20 @@ def main():
     enable_finetune_trajopt = True
     
     motion_gen_config = MotionGenConfig.load_from_robot_config(
-        robot_cfg,
-        world_cfg,
-        tensor_args,
-        collision_checker_type=CollisionCheckerType.MESH,
-        num_trajopt_seeds=12,
-        num_graph_seeds=12,
-        interpolation_dt=interpolation_dt,
-        collision_cache={"obb": n_obstacle_cuboids, "mesh": n_obstacle_mesh},
+        robot_cfg,  # 添加机器人配置文件，里面有机器人的关节名称，关节限制，关节类型，关节位置，关节速度，关节加速度，关节力矩等
+        world_cfg,  # 添加世界配置文件，里面有障碍物的位置，障碍物的形状，障碍物的尺寸等
+        tensor_args,  # 添加tensor配置文件，里面有tensor的设备类型，tensor的精度等  
+        collision_checker_type=CollisionCheckerType.MESH,  # 添加碰撞检测类型，这里使用的是mesh碰撞检测
+        num_trajopt_seeds=12,  # 添加trajopt种子数，这里使用的是12个种子
+        num_graph_seeds=12,  # 添加graph种子数，这里使用的是12个种子
+        interpolation_dt=interpolation_dt,  # 添加插值时间，这里使用的是0.05秒
+        collision_cache={"obb": n_obstacle_cuboids, "mesh": n_obstacle_mesh},  # 添加碰撞缓存，这里使用的是10个障碍物
         optimize_dt=optimize_dt,
         trajopt_dt=trajopt_dt,
         trajopt_tsteps=trajopt_tsteps,
         trim_steps=trim_steps,
     )
+    
     motion_gen = MotionGen(motion_gen_config)
     
     print("warming up...")
@@ -184,7 +186,8 @@ def main():
     
     while simulation_app.is_running():
         my_world.step(render=True)
-current time 24.550001280382276
+        if not my_world.is_playing():
+            if i % 100 == 0:
                 print("**** Click Play to start simulation *****")
             i += 1
             continue
