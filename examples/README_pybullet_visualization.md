@@ -54,6 +54,16 @@ pip install -r requirements_pybullet.txt
 - **交互式菜单**: 友好的配置文件选择界面
 - **智能处理**: 自动处理网格文件缺失等异常情况
 
+#### SceneMotionGenVisualizer 类 (场景选择运动规划) 🆕
+
+最新的场景选择运动规划可视化器，提供：
+
+- **完整场景选择**: 可选择任意CuRobo世界配置进行运动规划
+- **三种规划演示**: 简单运动规划、避障运动规划、多目标运动规划
+- **统一界面**: 场景选择和演示类型选择的分层菜单界面
+- **智能障碍物加载**: 自动加载并显示选定场景的所有障碍物
+- **多几何体支持**: 完整支持立方体、球体、胶囊体等几何体可视化
+
 ### 使用方法
 
 #### 基本可视化
@@ -147,6 +157,32 @@ world_visualizer.load_world_config(world_cfg)
 # python world_visualization_pybullet.py
 ```
 
+#### 场景选择运动规划可视化 🆕
+
+```python
+from motion_gen_scene_selector import SceneMotionGenVisualizer
+
+# 创建场景选择运动规划可视化器
+scene_visualizer = SceneMotionGenVisualizer(gui=True)
+
+# 加载任意世界配置的障碍物
+world_cfg = WorldConfig.from_dict(world_cfg_dict)
+scene_visualizer.load_obstacles_from_world_config(world_cfg)
+
+# 可视化运动规划轨迹（包含障碍物）
+scene_visualizer.visualize_trajectory(
+    trajectory=interpolated_trajectory,
+    start_state=start_joint_state,
+    goal_pose=target_pose,
+    interpolation_dt=0.02,
+    playback_speed=0.5,
+    show_trajectory_points=True
+)
+
+# 或者使用交互式菜单选择场景和演示类型
+# python motion_gen_scene_selector.py
+```
+
 ## 运行示例
 
 ### 1. 基本运动学可视化演示
@@ -198,6 +234,25 @@ python world_visualization_pybullet.py
   - 💊 胶囊体: 蓝色  
   - 🗂️ 网格: 黄色
 - 🎮 **交互式菜单**: 友好的配置文件选择界面
+
+### 5. 场景选择运动规划演示 🆕
+
+```bash
+python motion_gen_scene_selector.py
+```
+
+**功能特点**：
+- 🎯 **完整场景选择**: 可选择任意CuRobo世界配置进行运动规划
+- 📋 **分层菜单系统**: 
+  - 第一层: 选择世界配置文件（15个可选）
+  - 第二层: 选择演示类型（3种规划模式）
+- 🚀 **三种规划演示**:
+  1. **简单运动规划**: 基础的点到点运动规划
+  2. **避障运动规划**: 复杂环境中的避障轨迹规划  
+  3. **多目标运动规划**: 连续多个目标的运动规划序列
+- 🧊 **智能障碍物加载**: 自动加载并显示选定场景的所有障碍物
+- 🎨 **多几何体支持**: 完整支持立方体、球体、胶囊体等几何体可视化
+- 🎮 **用户友好界面**: 中文菜单，直观的交互体验
 
 **可用配置**：
 1. `base` - 基础配置

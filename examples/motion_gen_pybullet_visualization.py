@@ -333,7 +333,7 @@ def demo_motion_gen_simple_visualization():
             MotionGenPlanConfig(max_attempts=3)
         )
         
-        if result.success.item():
+        if result.success is not None and (result.success.item() if hasattr(result.success, 'item') else result.success):
             print(f"轨迹规划成功！")
             print(f"规划时间: {result.solve_time:.4f}秒")
             print(f"轨迹时间: {result.motion_time:.4f}秒")
@@ -431,7 +431,7 @@ def demo_motion_gen_collision_avoidance():
             )
         )
         
-        if result.success.item():
+        if result.success is not None and (result.success.item() if hasattr(result.success, 'item') else result.success):
             print(f"避障轨迹规划成功！")
             print(f"规划时间: {result.solve_time:.4f}秒")
             print(f"轨迹时间: {result.motion_time:.4f}秒")
@@ -515,7 +515,7 @@ def demo_motion_gen_multiple_goals():
                 MotionGenPlanConfig(max_attempts=3)
             )
             
-            if result.success.item():
+            if result.success is not None and (result.success.item() if hasattr(result.success, 'item') else result.success):
                 print(f"到目标 {i+1} 的轨迹规划成功！")
                 print(f"规划时间: {result.solve_time:.4f}秒")
                 
@@ -534,7 +534,13 @@ def demo_motion_gen_multiple_goals():
                 
                 # 更新当前状态为轨迹的终点
                 final_joint_state = interpolated_trajectory.position[-1]
-                current_state = JointState.from_position(final_joint_state.view(1, -1))
+                if hasattr(final_joint_state, 'view'):
+                    current_state = JointState.from_position(final_joint_state.view(1, -1))
+                else:
+                    # 如果final_joint_state不是tensor，需要转换
+                    current_state = JointState.from_position(
+                        torch.tensor(final_joint_state).view(1, -1)
+                    )
                 
                 if i < len(goal_positions) - 1:
                     print(f"按回车键继续到下一个目标...")
