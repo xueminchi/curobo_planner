@@ -32,7 +32,7 @@ torch.backends.cudnn.allow_tf32 = True
 
 
 class PickAndPlaceVisualizerFixed(PyBulletKinematicsVisualizer):
-    """扩展的可视化器，专门用于Pick and Place演示"""
+    """Pick and Place 可视化器 (修复版本)"""
     
     def __init__(self, robot_config_name="franka.yml", gui=True):
         super().__init__(robot_config_name, gui)
@@ -40,10 +40,7 @@ class PickAndPlaceVisualizerFixed(PyBulletKinematicsVisualizer):
         self.target_object_id = None
         self.target_markers = []
         self.sphere_marker_ids = []  # 存储球体标记的ID
-        self.sphere_relative_positions = []  # 存储球体相对于末端执行器的偏移量
-        self.motion_gen = None  # 用于运动学计算，可以是MotionGen对象或None
-        self.attached_sphere_positions = []  # 存储附加球体的绝对位置
-        self.ee_to_sphere_transforms = []  # 存储从末端执行器到球体的变换
+        self.motion_gen = None  # 存储motion_gen引用以便更新球体位置
         
     def create_world_with_target_object(self):
         """创建包含目标物体和障碍物的世界"""
@@ -240,48 +237,46 @@ class PickAndPlaceVisualizerFixed(PyBulletKinematicsVisualizer):
             print(f"\n⏹️  轨迹播放被中断")
     
     def _update_sphere_markers(self, joint_config):
-        """更新球体标记位置 - 简化版本"""
-        if len(self.sphere_marker_ids) == 0:
-            return
-            
+        """更新球体标记位置"""
         try:
-            # 获取当前末端执行器位置
-            extended_config = self._extend_joint_configuration(joint_config)
-            self.set_joint_angles(extended_config)
-            ee_pos, ee_quat = self.get_end_effector_pose()
+            # 创建当前关节状态
+            from curobo.types.robot import JointState
+            current_joint_state = JointState.from_position(
+                torch.tensor(joint_config, dtype=torch.float32).view(1, -1)
+            )
             
-            if ee_pos is None:
+            # 计算当前运动学状态
+            if self.motion_gen is None:
                 return
                 
-            # 如果是第一次更新，计算并保存球体相对位置
-            if len(self.sphere_relative_positions) == 0 and len(self.attached_sphere_positions) > 0:
-                # 使用当前的末端执行器位置作为参考
-                initial_ee_pos = ee_pos
-                self.sphere_relative_positions = []
-                for abs_pos in self.attached_sphere_positions:
-                    relative_pos = [
-                        abs_pos[0] - initial_ee_pos[0],
-                        abs_pos[1] - initial_ee_pos[1], 
-                        abs_pos[2] - initial_ee_pos[2]
-                    ]
-                    self.sphere_relative_positions.append(relative_pos)
-                print(f"💡 计算了 {len(self.sphere_relative_positions)} 个球体的相对位置")
+            kin_state = self.motion_gen.compute_kinematics(current_joint_state)
             
-            # 更新球体位置
-            for i, sphere_id in enumerate(self.sphere_marker_ids):
-                if i < len(self.sphere_relative_positions):
-                    relative_pos = self.sphere_relative_positions[i]
-                    new_pos = [
-                        ee_pos[0] + relative_pos[0],
-                        ee_pos[1] + relative_pos[1],
-                        ee_pos[2] + relative_pos[2]
-                    ]
-                    p.resetBasePositionAndOrientation(
-                        sphere_id,
-                        new_pos,
-                        [0, 0, 0, 1]
-                    )
-                    
+            # 获取世界坐标系下的球体位置
+            if kin_state.robot_spheres is not None:
+                all_spheres = kin_state.robot_spheres.squeeze().cpu().numpy()
+                
+                # 找出附加对象的球体（通过半径匹配）
+                target_radius = 0.01  # 匹配我们设置的半径，但系统可能使用了更小的
+                attached_spheres_indices = []
+                
+                for i, sphere in enumerate(all_spheres):
+                    x, y, z, radius = sphere
+                    # 使用更宽松的半径匹配，因为系统可能调整了半径
+                    if radius > 0 and (abs(radius - target_radius) < 0.005 or abs(radius - 0.0005) < 0.0001):
+                        attached_spheres_indices.append(i)
+                
+                # 如果找到的球体数量与标记数量匹配，更新位置
+                if len(attached_spheres_indices) == len(self.sphere_marker_ids):
+                    for marker_idx, sphere_idx in enumerate(attached_spheres_indices):
+                        sphere = all_spheres[sphere_idx]
+                        x, y, z, radius = sphere
+                        
+                        # 更新球体标记位置
+                        p.resetBasePositionAndOrientation(
+                            self.sphere_marker_ids[marker_idx],
+                            [x, y, z],
+                            [0, 0, 0, 1]
+                        )
         except Exception as e:
             # 静默处理错误，避免影响轨迹播放
             pass
@@ -345,8 +340,7 @@ def demo_pick_and_place_fixed():
     visualizer = PickAndPlaceVisualizerFixed(gui=True)
     
     # 设置可视化器的motion_gen引用以便更新球体位置
-    # 注意：这里绕过类型检查，因为motion_gen被初始化为None但后续赋值为MotionGen对象
-    visualizer.motion_gen = motion_gen  # type: ignore
+    visualizer.motion_gen = motion_gen
     
     try:
         # 创建可视化世界
@@ -552,7 +546,6 @@ def demo_pick_and_place_fixed():
                         
                         sphere_marker_ids.append(sphere_marker)
                         visualizer.sphere_marker_ids.append(sphere_marker)  # 保存到可视化器中
-                        visualizer.attached_sphere_positions.append([x, y, z])  # 保存球体的绝对位置
                         print(f"   ✅ 创建球体标记 {sphere_idx}: 位置=({x:.3f}, {y:.3f}, {z:.3f})")
                         print(f"      原始半径={radius:.4f}m, 可视化半径={visual_radius:.4f}m")
                         
