@@ -208,6 +208,7 @@ def demo_motion_gen(js=False):
 
     retract_pose = Pose(state.ee_pos_seq.squeeze(), quaternion=state.ee_quat_seq.squeeze())
     start_state = JointState.from_position(retract_cfg.view(1, -1))
+    print("This is the start state: ", start_state)
     goal_state = start_state.clone()
 
     start_state.position[0, 0] += 0.25

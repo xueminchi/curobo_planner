@@ -22,11 +22,11 @@ robot_cfg:
     "panda_joint2": "Z",
     "panda_joint3": "Z",
     "panda_joint4": "Z",
-     "panda_joint5": "Z",
+    "panda_joint5": "Z",
     "panda_joint6": "Z",
     "panda_joint7": "Z",
     "panda_finger_joint1": "Y",
-     "panda_finger_joint2":  "Y",
+    "panda_finger_joint2":  "Y",
     }
 
     usd_flip_joint_limits: ["panda_finger_joint2"]

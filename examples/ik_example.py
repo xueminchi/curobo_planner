@@ -114,7 +114,7 @@ def demo_full_config_collision_free_ik():
             torch.mean(result.position_error) * 100.0,
             torch.mean(result.rotation_error) * 100.0,
         )
-    exit()
+
     print("Running Batch IK (10 goals)")
     q_sample = ik_solver.sample_configs(10)
     kin_state = ik_solver.fk(q_sample)
