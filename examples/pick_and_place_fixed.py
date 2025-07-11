@@ -81,7 +81,7 @@ class PickAndPlaceVisualizerFixed(PyBulletKinematicsVisualizer):
             },
             {
                 "position": [0.6, 0.0, 0.55],   # 与CuRobo world_config同步
-                "dims": [0.35, 0.1, 1.1],
+                "dims": [0.45, 0.1, 1.1],
                 "color": [0.2, 0.8, 0.2, 0.7]  # 绿色
             }
         ]
