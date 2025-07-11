@@ -44,6 +44,16 @@ pip install -r requirements_pybullet.txt
 - **多目标规划**: 连续多个目标的运动规划
 - **实时播放控制**: 可调节的播放速度和步进控制
 
+#### WorldVisualizerPyBullet 类 (世界配置)
+
+专门的世界配置可视化器，提供：
+
+- **多几何体支持**: 立方体、球体、胶囊体、网格等
+- **颜色配置**: 支持自定义颜色或默认颜色方案
+- **完整配置库**: 可视化所有CuRobo内置世界配置
+- **交互式菜单**: 友好的配置文件选择界面
+- **智能处理**: 自动处理网格文件缺失等异常情况
+
 ### 使用方法
 
 #### 基本可视化
@@ -116,6 +126,27 @@ motion_visualizer.visualize_trajectory(
 )
 ```
 
+#### 世界配置可视化
+
+```python
+from world_visualization_pybullet import WorldVisualizerPyBullet
+from curobo.geom.types import WorldConfig
+from curobo.util_file import get_world_configs_path, join_path, load_yaml
+
+# 创建世界可视化器
+world_visualizer = WorldVisualizerPyBullet(gui=True)
+
+# 加载特定世界配置
+world_cfg_dict = load_yaml(join_path(get_world_configs_path(), "collision_primitives_3d.yml"))
+world_cfg = WorldConfig.from_dict(world_cfg_dict)
+
+# 可视化世界配置
+world_visualizer.load_world_config(world_cfg)
+
+# 或者使用交互式菜单选择配置
+# python world_visualization_pybullet.py
+```
+
 ## 运行示例
 
 ### 1. 基本运动学可视化演示
@@ -151,6 +182,44 @@ python motion_gen_pybullet_visualization.py
 1. **简单运动规划**: 基础的点到点运动规划
 2. **避障运动规划**: 复杂环境中的避障轨迹规划
 3. **多目标运动规划**: 连续多个目标的运动规划序列
+
+### 4. 世界配置可视化演示
+
+```bash
+python world_visualization_pybullet.py
+```
+
+**功能特点**：
+- 🌍 **完整配置库**: 可视化所有15个CuRobo内置世界配置
+- 📦 **多几何体支持**: 立方体、球体、胶囊体、网格
+- 🎨 **颜色方案**: 
+  - 📦 立方体: 红色（支持自定义颜色）
+  - 🌕 球体: 绿色
+  - 💊 胶囊体: 蓝色  
+  - 🗂️ 网格: 黄色
+- 🎮 **交互式菜单**: 友好的配置文件选择界面
+
+**可用配置**：
+1. `base` - 基础配置
+2. `cage` - 笼子环境
+3. `cubby` - 柜子环境
+4. `floor_plan` - 楼层规划
+5. `primitives_3d` - 多种几何体演示
+6. `table` - 桌面环境
+7. `pillar_wall` - 柱子和墙壁
+8. 等等... (共15个配置)
+
+### 5. 测试脚本
+
+```bash
+# 测试运动规划可视化
+python test_motion_gen_visualization.py
+
+# 测试世界配置可视化
+python test_world_visualization.py
+```
+
+这些测试脚本提供自动化测试和演示功能，确保各项功能正常工作。
 
 ### 与CuRobo比较
 

@@ -400,14 +400,21 @@ def demo_motion_gen_collision_avoidance():
         
         # 计算retract姿态作为目标
         state = motion_gen.compute_kinematics(start_state)
-        goal_pose = Pose(
-            state.ee_pos_seq.squeeze(), 
-            quaternion=state.ee_quat_seq.squeeze()
-        )
-        
+        # goal_pose = Pose(
+        #     state.ee_pos_seq.squeeze(), 
+        #     quaternion=state.ee_quat_seq.squeeze()
+        # )
+
+        goal_pose = Pose.from_list([0.4, 0.2, 0.4, 0.0, 1.0, 0.0, 0.0])  # x, y, z, qw, qx, qy, qz
+
         # 修改起始状态（添加偏移）
-        start_state.position[0, 0] += 0.3  # 修改第一个关节
-        start_state.position[0, 1] += 0.2  # 修改第二个关节
+        # start_state.position[0, 0] += 0.3  # 修改第一个关节
+        # start_state.position[0, 1] += 0.2  # 修改第二个关节
+        # start_state.position[0, 2] += 0.2  # 修改第三个关节
+        # start_state.position[0, 3] += 0.4  # 修改第四个关节
+        # start_state.position[0, 4] += 0.2  # 修改第五个关节
+        # start_state.position[0, 5] += 0.5  # 修改第六个关节
+        # start_state.position[0, 6] += 0.6  # 修改第七个关节
         
         print(f"\n规划避障轨迹...")
         print(f"从偏移位置回到retract位置")
