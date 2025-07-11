@@ -51,7 +51,7 @@ class PickAndPlaceVisualizerFixed(PyBulletKinematicsVisualizer):
         
         # 创建目标立方体 - 位置调整到更合适的地方
         target_dims = [0.05, 0.05, 0.05]
-        target_position = [0.4, 0.15, 0.025]  # 调整到更容易抓取的位置
+        target_position = [0.45, 0.35, 0.025]  # 调整到更容易抓取的位置
         
         target_collision_shape = p.createCollisionShape(
             p.GEOM_BOX, 
@@ -72,16 +72,16 @@ class PickAndPlaceVisualizerFixed(PyBulletKinematicsVisualizer):
         
         print(f"📦 创建目标立方体: 位置 {target_position}, 尺寸 {target_dims}")
         
-        # 创建障碍物 - 位置远离抓取区域
+        # 创建障碍物 - 与CuRobo配置同步的高障碍物
         obstacles = [
             {
-                "position": [0.2, -0.3, 0.1],
-                "dims": [0.08, 0.08, 0.2],
+                "position": [-0.2, -0.3, 0.6],   # 与CuRobo world_config同步
+                "dims": [0.08, 0.08, 1.2],
                 "color": [0.2, 0.2, 0.8, 0.7]  # 蓝色
             },
             {
-                "position": [0.6, 0.0, 0.05],
-                "dims": [0.08, 0.1, 0.1],
+                "position": [0.6, 0.0, 0.55],   # 与CuRobo world_config同步
+                "dims": [0.35, 0.1, 1.1],
                 "color": [0.2, 0.8, 0.2, 0.7]  # 绿色
             }
         ]
@@ -299,17 +299,17 @@ def create_optimized_world():
             # 目标立方体（位置优化）
             "target_cube": {
                 "dims": [0.05, 0.05, 0.05],
-                "pose": [0.4, 0.15, 0.025, 1, 0, 0, 0.0]
+                "pose": [0.45, 0.35, 0.025, 1, 0, 0, 0.0]  # 与PyBullet中的target_position同步
             },
-            # 障碍物1（远离抓取区域）
+            # 障碍物1（高障碍物，与PyBullet同步）
             "obstacle1": {
-                "dims": [0.08, 0.08, 0.2],
-                "pose": [0.2, -0.3, 0.1, 1, 0, 0, 0.0]
+                "dims": [0.08, 0.08, 1.2],  # 修改为1.2m高度，与PyBullet同步
+                "pose": [-0.2, -0.3, 0.6, 1, 0, 0, 0.0]  # 更新位置为[-0.2, -0.3, 0.6]
             },
-            # 障碍物2
+            # 障碍物2（高障碍物，与PyBullet同步）
             "obstacle2": {
-                "dims": [0.08, 0.1, 0.1],
-                "pose": [0.6, 0.0, 0.05, 1, 0, 0, 0.0]
+                "dims": [0.35, 0.1, 1.1],   # 更新尺寸为[0.35, 0.1, 1.1]，与PyBullet同步
+                "pose": [0.6, 0.0, 0.55, 1, 0, 0, 0.0]  # 调整z位置到0.55（高度的一半）
             }
         }
     }
@@ -336,7 +336,8 @@ def demo_pick_and_place_fixed():
         interpolation_dt=0.02,
         collision_checker_type=CollisionCheckerType.PRIMITIVE,
         use_cuda_graph=True,
-        num_trajopt_seeds=4,
+        num_trajopt_seeds=6,  # 增加轨迹优化种子数以提高避障成功率
+        num_graph_seeds=4,    # 增加图规划种子数
     )
     motion_gen = MotionGen(motion_gen_config)
     motion_gen.warmup()
@@ -349,6 +350,15 @@ def demo_pick_and_place_fixed():
     visualizer.motion_gen = motion_gen  # type: ignore
     
     try:
+        # 显式更新motion_gen的世界配置以确保障碍物被正确加载
+        from curobo.geom.types import WorldConfig
+        world_cfg = WorldConfig.from_dict(world_config)
+        motion_gen.update_world(world_cfg)
+        print(f"🌍 已将障碍物配置加载到CuRobo运动规划器中")
+        print(f"   - 障碍物1: 位置 [-0.2, -0.3, 0.6], 尺寸 [0.08, 0.08, 1.2]")
+        print(f"   - 障碍物2: 位置 [0.6, 0.0, 0.55], 尺寸 [0.35, 0.1, 1.1]")
+        print(f"   - 目标立方体: 位置 [0.45, 0.35, 0.025], 尺寸 [0.05, 0.05, 0.05]")
+        
         # 创建可视化世界
         target_pos, target_dims = visualizer.create_world_with_target_object()
         
@@ -358,7 +368,7 @@ def demo_pick_and_place_fixed():
         
         approach_position = [target_pos[0], target_pos[1], target_pos[2] + target_dims[2]/2 + approach_height]
         grasp_position = [target_pos[0], target_pos[1], target_pos[2] + target_dims[2]/2 + grasp_height]
-        place_position = [0.45, 0.45, 0.35]  # 更保守的放置位置
+        place_position = [0.45, -0.45, 0.55]  # 更保守的放置位置
         
         # 添加可视化标记
         visualizer.add_marker(approach_position, 0.02, [1, 0.5, 0, 0.8])  # 橙色 - 接近位置
@@ -383,6 +393,11 @@ def demo_pick_and_place_fixed():
         print(f"5. 📤 放置物体（从机器人分离）")
         print(f"6. 🏠 返回起始位置")
         
+        # 验证碰撞检测设置
+        print(f"\n🔬 验证碰撞检测设置:")
+        print(f"   - 碰撞检测器类型: {motion_gen_config.world_coll_checker.checker_type}")
+        print(f"   - 已加载世界配置到CuRobo运动规划器")
+        
         input("\n按回车键开始演示...")
         
         # === 阶段1: 移动到接近位置 ===
@@ -395,7 +410,12 @@ def demo_pick_and_place_fixed():
         result1 = motion_gen.plan_single(
             start_state, 
             approach_pose, 
-            MotionGenPlanConfig(max_attempts=5, enable_graph=True)
+            MotionGenPlanConfig(
+                max_attempts=8, 
+                enable_graph=True,
+                enable_opt=True,
+                timeout=15.0
+            )
         )
         
         if result1.success is not None and (result1.success.item() if hasattr(result1.success, 'item') else result1.success):
@@ -433,7 +453,11 @@ def demo_pick_and_place_fixed():
         result2 = motion_gen.plan_single(
             current_state, 
             grasp_pose, 
-            MotionGenPlanConfig(max_attempts=5)
+            MotionGenPlanConfig(
+                max_attempts=5,
+                enable_graph=True,
+                enable_opt=True
+            )
         )
         
         if result2.success is not None and (result2.success.item() if hasattr(result2.success, 'item') else result2.success):
@@ -836,13 +860,16 @@ def main():
     print("这个版本解决了抓取位置和tensor处理的问题")
     print("\n✨ 改进:")
     print("• 🎯 可视化抓取位置标记")
-    print("• 📏 优化的安全抓取距离")
+    print("• 📏 优化的安全抓取距离") 
     print("• 🔄 分阶段接近和抓取")
     print("• 🛠️  修复了tensor处理问题")
     print("• 🎬 更好的可视化效果")
+    print("• 🚧 修复了障碍物碰撞检测问题")
+    print("• 🌟 支持动态球体可视化")
+    print("• 🔍 完整的避障路径规划")
     
-    choice = input("\n开始演示吗？(y/n): ").strip().lower()
-    if choice in ['y', 'yes', '是']:
+    response = input("\n开始Pick and Place演示吗？(y/n): ")
+    if response.lower() in ['y', 'yes', '是']:
         demo_pick_and_place_fixed()
     else:
         print("演示已取消")
