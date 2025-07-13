@@ -7,7 +7,6 @@ Pick and Place 演示脚本 (修复版本)
 import time
 import numpy as np
 import pybullet as p
-import pybullet_data
 from datetime import datetime
 
 # Third Party
@@ -351,14 +350,10 @@ def demo_pick_and_place_fixed():
     
     try:
         # 显式更新motion_gen的世界配置以确保障碍物被正确加载
-        from curobo.geom.types import WorldConfig
         world_cfg = WorldConfig.from_dict(world_config)
         motion_gen.update_world(world_cfg)
         print(f"🌍 已将障碍物配置加载到CuRobo运动规划器中")
-        print(f"   - 障碍物1: 位置 [-0.2, -0.3, 0.6], 尺寸 [0.08, 0.08, 1.2]")
-        print(f"   - 障碍物2: 位置 [0.6, 0.0, 0.55], 尺寸 [0.35, 0.1, 1.1]")
-        print(f"   - 目标立方体: 位置 [0.45, 0.35, 0.025], 尺寸 [0.05, 0.05, 0.05]")
-        
+
         # 创建可视化世界
         target_pos, target_dims = visualizer.create_world_with_target_object()
         

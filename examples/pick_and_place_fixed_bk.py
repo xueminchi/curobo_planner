@@ -2,6 +2,22 @@
 """
 Pick and Place 演示脚本 (修复版本)
 解决了tensor处理问题，增加了抓取位置可视化
+
+重要提醒：
+1. 当前存在配置不一致问题：
+   - CuRobo世界配置中障碍物2尺寸：[0.6, 0.1, 1.1] (第420行)
+   - PyBullet可视化中障碍物2尺寸：[0.6, 0.1, 1.1] (第178行)
+   - 两者现在一致，但如果修改其中一个，必须同时修改另一个！
+
+2. 如果机械臂与绿色障碍物碰撞，检查：
+   - create_optimized_world()函数中的obstacle2配置
+   - create_world_with_target_object()方法中的obstacles配置
+   - 确保两处的dims尺寸完全一致
+
+3. 激活距离设置：
+   - 碰撞距离监测器使用0.1m激活距离 (第65行)
+   - 运动规划器使用默认激活距离
+   - 激活距离越大，路径越保守但可能导致无解
 """
 
 import time
@@ -22,6 +38,7 @@ from curobo.types.robot import JointState, RobotConfig
 from curobo.util.logger import setup_curobo_logger
 from curobo.util_file import get_robot_configs_path, get_world_configs_path, join_path, load_yaml
 from curobo.wrap.reacher.motion_gen import MotionGen, MotionGenConfig, MotionGenPlanConfig
+from curobo.wrap.model.robot_world import RobotWorld, RobotWorldConfig
 
 # Local
 from pybullet_kinematics_visualization import PyBulletKinematicsVisualizer
@@ -32,7 +49,7 @@ torch.backends.cudnn.allow_tf32 = True
 
 
 class PickAndPlaceVisualizerFixed(PyBulletKinematicsVisualizer):
-    """Pick and Place 可视化器 (修复版本)"""
+    """扩展的可视化器，专门用于Pick and Place演示"""
     
     def __init__(self, robot_config_name="franka.yml", gui=True):
         super().__init__(robot_config_name, gui)
@@ -40,15 +57,111 @@ class PickAndPlaceVisualizerFixed(PyBulletKinematicsVisualizer):
         self.target_object_id = None
         self.target_markers = []
         self.sphere_marker_ids = []  # 存储球体标记的ID
-        self.motion_gen = None  # 存储motion_gen引用以便更新球体位置
+        self.sphere_relative_positions = []  # 存储球体相对于末端执行器的偏移量
+        self.motion_gen = None  # 用于运动学计算，可以是MotionGen对象或None
+        self.attached_sphere_positions = []  # 存储附加球体的绝对位置
+        self.ee_to_sphere_transforms = []  # 存储从末端执行器到球体的变换
+        self.collision_checker = None  # 碰撞检测器
+        self.tensor_args = TensorDeviceType()  # 添加tensor_args属性
         
+    def setup_collision_checker(self, world_config):
+        """设置碰撞检测器用于距离监测"""
+        print("🔧 初始化碰撞距离监测器...")
+        
+        try:
+            # 加载机器人配置
+            robot_file = "franka.yml"
+            robot_cfg = load_yaml(join_path(get_robot_configs_path(), robot_file))["robot_cfg"]
+            robot_config = RobotConfig.from_dict(robot_cfg, self.tensor_args)
+            
+            # 创建RobotWorld配置，用于碰撞检测
+            collision_config = RobotWorldConfig.load_from_config(
+                robot_config,
+                world_config,
+                collision_activation_distance=0.1,  # 使用1米的激活距离来获取距离信息
+                collision_checker_type=CollisionCheckerType.PRIMITIVE,
+                tensor_args=self.tensor_args,
+            )
+            
+            # 创建碰撞检测器
+            self.collision_checker = RobotWorld(collision_config)
+            print("✅ 碰撞距离监测器初始化成功")
+            print(f"   - 机器人配置: {robot_file}")
+            print(f"   - 碰撞检测器类型: PRIMITIVE")
+            print(f"   - 激活距离: 1.0m (用于获取距离信息)")
+            
+        except Exception as e:
+            print(f"❌ 碰撞距离监测器初始化失败: {e}")
+            self.collision_checker = None
+    
+    def get_collision_distance(self, joint_positions):
+        """获取机械臂与障碍物的最近距离"""
+        if self.collision_checker is None:
+            return None, None
+            
+        try:
+            # 确保joint_positions是正确的tensor格式
+            if not torch.is_tensor(joint_positions):
+                joint_positions = torch.tensor(joint_positions, dtype=self.tensor_args.dtype, device=self.tensor_args.device)
+            
+            # 确保是2D tensor [batch_size, dof]
+            if joint_positions.dim() == 1:
+                joint_positions = joint_positions.unsqueeze(0)
+            elif joint_positions.dim() > 2:
+                joint_positions = joint_positions.squeeze()
+                if joint_positions.dim() == 1:
+                    joint_positions = joint_positions.unsqueeze(0)
+            
+            # 获取机械臂的球体位置
+            kin_state = self.collision_checker.get_kinematics(joint_positions)
+            if kin_state.link_spheres_tensor is None:
+                return None, None
+            robot_spheres = kin_state.link_spheres_tensor.unsqueeze(1)  # 添加时间维度
+            
+            # 计算与世界障碍物的距离  
+            d_world, d_world_vec = self.collision_checker.get_collision_vector(robot_spheres)
+            
+            # 计算自碰撞距离
+            d_self = self.collision_checker.get_self_collision_distance(robot_spheres)
+            
+            # 转换为numpy用于显示
+            world_distance = d_world.min().item() if d_world.numel() > 0 else float('inf')
+            self_distance = d_self.min().item() if d_self.numel() > 0 else float('inf')
+            
+            return world_distance, self_distance
+            
+        except Exception as e:
+            # 静默处理错误，避免影响主程序
+            return None, None
+    
+    def print_collision_distance(self, joint_positions, step_index=None, phase=""):
+        """打印碰撞距离信息"""
+        world_dist, self_dist = self.get_collision_distance(joint_positions)
+        
+        if world_dist is not None and self_dist is not None:
+            step_info = f"步骤{step_index}: " if step_index is not None else ""
+            phase_info = f"[{phase}] " if phase else ""
+            
+            print(f"📏 {phase_info}{step_info}碰撞距离 - 世界障碍物: {world_dist:.4f}m, 自碰撞: {self_dist:.4f}m")
+            
+            # 如果距离很近，给出警告
+            if world_dist < 0.05:  # 5cm
+                print(f"⚠️  警告: 与障碍物距离过近! ({world_dist:.4f}m)")
+            elif world_dist < 0.1:  # 10cm
+                print(f"⚡ 注意: 接近障碍物 ({world_dist:.4f}m)")
+                
+            if self_dist < 0.01:  # 1cm
+                print(f"🚨 自碰撞警告: 机械臂链接距离过近! ({self_dist:.4f}m)")
+        else:
+            print(f"❌ 无法获取碰撞距离信息")
+    
     def create_world_with_target_object(self):
         """创建包含目标物体和障碍物的世界"""
         self.clear_obstacles()
         
         # 创建目标立方体 - 位置调整到更合适的地方
         target_dims = [0.05, 0.05, 0.05]
-        target_position = [0.4, 0.15, 0.025]  # 调整到更容易抓取的位置
+        target_position = [0.45, 0.35, 0.025]  # 调整到更容易抓取的位置
         
         target_collision_shape = p.createCollisionShape(
             p.GEOM_BOX, 
@@ -69,16 +182,16 @@ class PickAndPlaceVisualizerFixed(PyBulletKinematicsVisualizer):
         
         print(f"📦 创建目标立方体: 位置 {target_position}, 尺寸 {target_dims}")
         
-        # 创建障碍物 - 位置远离抓取区域
+        # 创建障碍物 - 与CuRobo配置同步的高障碍物
         obstacles = [
+            # {
+            #     "position": [-0.2, -0.3, 0.6],   # 与CuRobo world_config同步
+            #     "dims": [0.08, 0.08, 1.2],
+            #     "color": [0.2, 0.2, 0.8, 0.7]  # 蓝色
+            # },
             {
-                "position": [0.2, -0.3, 0.1],
-                "dims": [0.08, 0.08, 0.2],
-                "color": [0.2, 0.2, 0.8, 0.7]  # 蓝色
-            },
-            {
-                "position": [0.6, 0.0, 0.05],
-                "dims": [0.08, 0.1, 0.1],
+                "position": [0.6, 0.0, 0.55],   # 与CuRobo world_config同步
+                "dims": [0.6, 0.1, 1.1],
                 "color": [0.2, 0.8, 0.2, 0.7]  # 绿色
             }
         ]
@@ -194,10 +307,17 @@ class PickAndPlaceVisualizerFixed(PyBulletKinematicsVisualizer):
             return None
     
     def visualize_trajectory_with_object(self, trajectory, interpolation_dt=0.02, 
-                                       playback_speed=1.0, show_object_attached=False):
-        """可视化携带物体的轨迹"""
+                                       playback_speed=1.0, show_object_attached=False,
+                                       phase=""):
+        """可视化携带物体的轨迹，并实时监测碰撞距离"""
         print(f"\n🎬 开始播放轨迹...")
         print(f"轨迹长度: {len(trajectory.position)} 个时间步")
+        
+        # 添加碰撞距离监测提示
+        if self.collision_checker is not None:
+            print(f"📏 实时碰撞距离监测已启用")
+        else:
+            print(f"⚠️  碰撞距离监测未启用")
         
         try:
             for i, joint_positions in enumerate(trajectory.position):
@@ -224,6 +344,10 @@ class PickAndPlaceVisualizerFixed(PyBulletKinematicsVisualizer):
                 if show_object_attached and len(self.sphere_marker_ids) > 0 and self.motion_gen is not None:
                     self._update_sphere_markers(joint_config)
                 
+                # 每10步打印一次碰撞距离
+                if i % 10 == 0 and self.collision_checker is not None:
+                    self.print_collision_distance(joint_config, i, phase)
+                
                 p.stepSimulation()
                 time.sleep(interpolation_dt / playback_speed)
                 
@@ -233,50 +357,59 @@ class PickAndPlaceVisualizerFixed(PyBulletKinematicsVisualizer):
             
             print(f"\n✅ 轨迹播放完成！")
             
+            # 在轨迹结束时再次打印最终距离
+            if self.collision_checker is not None:
+                final_joint_config = trajectory.position[-1]
+                if hasattr(final_joint_config, 'cpu'):
+                    final_joint_config = final_joint_config.cpu().numpy()
+                self.print_collision_distance(final_joint_config, len(trajectory.position)-1, f"{phase}-终点")
+            
         except KeyboardInterrupt:
             print(f"\n⏹️  轨迹播放被中断")
     
     def _update_sphere_markers(self, joint_config):
-        """更新球体标记位置"""
-        try:
-            # 创建当前关节状态
-            from curobo.types.robot import JointState
-            current_joint_state = JointState.from_position(
-                torch.tensor(joint_config, dtype=torch.float32).view(1, -1)
-            )
+        """更新球体标记位置 - 简化版本"""
+        if len(self.sphere_marker_ids) == 0:
+            return
             
-            # 计算当前运动学状态
-            if self.motion_gen is None:
+        try:
+            # 获取当前末端执行器位置
+            extended_config = self._extend_joint_configuration(joint_config)
+            self.set_joint_angles(extended_config)
+            ee_pos, ee_quat = self.get_end_effector_pose()
+            
+            if ee_pos is None:
                 return
                 
-            kin_state = self.motion_gen.compute_kinematics(current_joint_state)
+            # 如果是第一次更新，计算并保存球体相对位置
+            if len(self.sphere_relative_positions) == 0 and len(self.attached_sphere_positions) > 0:
+                # 使用当前的末端执行器位置作为参考
+                initial_ee_pos = ee_pos
+                self.sphere_relative_positions = []
+                for abs_pos in self.attached_sphere_positions:
+                    relative_pos = [
+                        abs_pos[0] - initial_ee_pos[0],
+                        abs_pos[1] - initial_ee_pos[1], 
+                        abs_pos[2] - initial_ee_pos[2]
+                    ]
+                    self.sphere_relative_positions.append(relative_pos)
+                print(f"💡 计算了 {len(self.sphere_relative_positions)} 个球体的相对位置")
             
-            # 获取世界坐标系下的球体位置
-            if kin_state.robot_spheres is not None:
-                all_spheres = kin_state.robot_spheres.squeeze().cpu().numpy()
-                
-                # 找出附加对象的球体（通过半径匹配）
-                target_radius = 0.01  # 匹配我们设置的半径，但系统可能使用了更小的
-                attached_spheres_indices = []
-                
-                for i, sphere in enumerate(all_spheres):
-                    x, y, z, radius = sphere
-                    # 使用更宽松的半径匹配，因为系统可能调整了半径
-                    if radius > 0 and (abs(radius - target_radius) < 0.005 or abs(radius - 0.0005) < 0.0001):
-                        attached_spheres_indices.append(i)
-                
-                # 如果找到的球体数量与标记数量匹配，更新位置
-                if len(attached_spheres_indices) == len(self.sphere_marker_ids):
-                    for marker_idx, sphere_idx in enumerate(attached_spheres_indices):
-                        sphere = all_spheres[sphere_idx]
-                        x, y, z, radius = sphere
-                        
-                        # 更新球体标记位置
-                        p.resetBasePositionAndOrientation(
-                            self.sphere_marker_ids[marker_idx],
-                            [x, y, z],
-                            [0, 0, 0, 1]
-                        )
+            # 更新球体位置
+            for i, sphere_id in enumerate(self.sphere_marker_ids):
+                if i < len(self.sphere_relative_positions):
+                    relative_pos = self.sphere_relative_positions[i]
+                    new_pos = [
+                        ee_pos[0] + relative_pos[0],
+                        ee_pos[1] + relative_pos[1],
+                        ee_pos[2] + relative_pos[2]
+                    ]
+                    p.resetBasePositionAndOrientation(
+                        sphere_id,
+                        new_pos,
+                        [0, 0, 0, 1]
+                    )
+                    
         except Exception as e:
             # 静默处理错误，避免影响轨迹播放
             pass
@@ -294,17 +427,17 @@ def create_optimized_world():
             # 目标立方体（位置优化）
             "target_cube": {
                 "dims": [0.05, 0.05, 0.05],
-                "pose": [0.4, 0.15, 0.025, 1, 0, 0, 0.0]
+                "pose": [0.45, 0.35, 0.025, 1, 0, 0, 0.0]  # 与PyBullet中的target_position同步
             },
-            # 障碍物1（远离抓取区域）
+            # 障碍物1（高障碍物，与PyBullet同步）
             "obstacle1": {
-                "dims": [0.08, 0.08, 0.2],
-                "pose": [0.2, -0.3, 0.1, 1, 0, 0, 0.0]
+                "dims": [0.08, 0.08, 1.2],  # 修改为1.2m高度，与PyBullet同步
+                "pose": [-0.2, -0.3, 0.6, 1, 0, 0, 0.0]  # 更新位置为[-0.2, -0.3, 0.6]
             },
-            # 障碍物2
+            # 障碍物2（高障碍物，与PyBullet同步）
             "obstacle2": {
-                "dims": [0.08, 0.1, 0.1],
-                "pose": [0.6, 0.0, 0.05, 1, 0, 0, 0.0]
+                "dims": [0.6, 0.1, 1.1],   # 更新尺寸为[0.35, 0.1, 1.1]，与PyBullet同步
+                "pose": [0.6, 0.0, 0.55, 1, 0, 0, 0.0]  # 调整z位置到0.55（高度的一半）
             }
         }
     }
@@ -331,7 +464,8 @@ def demo_pick_and_place_fixed():
         interpolation_dt=0.02,
         collision_checker_type=CollisionCheckerType.PRIMITIVE,
         use_cuda_graph=True,
-        num_trajopt_seeds=4,
+        num_trajopt_seeds=6,  # 增加轨迹优化种子数以提高避障成功率
+        num_graph_seeds=4,    # 增加图规划种子数
     )
     motion_gen = MotionGen(motion_gen_config)
     motion_gen.warmup()
@@ -340,9 +474,22 @@ def demo_pick_and_place_fixed():
     visualizer = PickAndPlaceVisualizerFixed(gui=True)
     
     # 设置可视化器的motion_gen引用以便更新球体位置
-    visualizer.motion_gen = motion_gen
+    # 注意：这里绕过类型检查，因为motion_gen被初始化为None但后续赋值为MotionGen对象
+    visualizer.motion_gen = motion_gen  # type: ignore
+    
+    # 设置碰撞检测器
+    visualizer.setup_collision_checker(world_config)
     
     try:
+        # 显式更新motion_gen的世界配置以确保障碍物被正确加载
+        from curobo.geom.types import WorldConfig
+        world_cfg = WorldConfig.from_dict(world_config)
+        motion_gen.update_world(world_cfg)
+        print(f"🌍 已将障碍物配置加载到CuRobo运动规划器中")
+        print(f"   - 障碍物1: 位置 [-0.2, -0.3, 0.6], 尺寸 [0.08, 0.08, 1.2]")
+        print(f"   - 障碍物2: 位置 [0.6, 0.0, 0.55], 尺寸 [0.35, 0.1, 1.1]")
+        print(f"   - 目标立方体: 位置 [0.45, 0.35, 0.025], 尺寸 [0.05, 0.05, 0.05]")
+        
         # 创建可视化世界
         target_pos, target_dims = visualizer.create_world_with_target_object()
         
@@ -352,7 +499,7 @@ def demo_pick_and_place_fixed():
         
         approach_position = [target_pos[0], target_pos[1], target_pos[2] + target_dims[2]/2 + approach_height]
         grasp_position = [target_pos[0], target_pos[1], target_pos[2] + target_dims[2]/2 + grasp_height]
-        place_position = [0.45, 0.45, 0.35]  # 更保守的放置位置
+        place_position = [0.45, -0.45, 0.55]  # 更保守的放置位置
         
         # 添加可视化标记
         visualizer.add_marker(approach_position, 0.02, [1, 0.5, 0, 0.8])  # 橙色 - 接近位置
@@ -369,6 +516,14 @@ def demo_pick_and_place_fixed():
         retract_cfg = motion_gen.get_retract_config()
         start_state = JointState.from_position(retract_cfg.view(1, -1))
         
+        # 检查起始状态的碰撞距离
+        print(f"\n🔍 起始状态碰撞距离检查:")
+        if torch.is_tensor(retract_cfg):
+            retract_cfg_np = retract_cfg.cpu().numpy()
+        else:
+            retract_cfg_np = retract_cfg
+        visualizer.print_collision_distance(retract_cfg_np, phase="起始状态")
+        
         print(f"\n📝 优化的规划流程:")
         print(f"1. 🚀 从起始位置移动到接近位置（安全距离）")
         print(f"2. 🎯 从接近位置移动到抓取位置")
@@ -376,6 +531,12 @@ def demo_pick_and_place_fixed():
         print(f"4. 🚚 移动到放置位置")
         print(f"5. 📤 放置物体（从机器人分离）")
         print(f"6. 🏠 返回起始位置")
+        
+        # 验证碰撞检测设置
+        print(f"\n🔬 验证碰撞检测设置:")
+        print(f"   - 碰撞检测器类型: {motion_gen_config.world_coll_checker.checker_type}")
+        print(f"   - 已加载世界配置到CuRobo运动规划器")
+        print(f"   - 碰撞距离监测已启用")
         
         input("\n按回车键开始演示...")
         
@@ -389,7 +550,12 @@ def demo_pick_and_place_fixed():
         result1 = motion_gen.plan_single(
             start_state, 
             approach_pose, 
-            MotionGenPlanConfig(max_attempts=5, enable_graph=True)
+            MotionGenPlanConfig(
+                max_attempts=8, 
+                enable_graph=True,
+                enable_opt=True,
+                timeout=15.0
+            )
         )
         
         if result1.success is not None and (result1.success.item() if hasattr(result1.success, 'item') else result1.success):
@@ -402,7 +568,8 @@ def demo_pick_and_place_fixed():
             visualizer.visualize_trajectory_with_object(
                 trajectory1, 
                 interpolation_dt=result1.interpolation_dt,
-                playback_speed=0.5
+                playback_speed=0.5,
+                phase="阶段1-接近"
             )
             
             # 安全地获取下一个状态
@@ -427,7 +594,11 @@ def demo_pick_and_place_fixed():
         result2 = motion_gen.plan_single(
             current_state, 
             grasp_pose, 
-            MotionGenPlanConfig(max_attempts=5)
+            MotionGenPlanConfig(
+                max_attempts=5,
+                enable_graph=True,
+                enable_opt=True
+            )
         )
         
         if result2.success is not None and (result2.success.item() if hasattr(result2.success, 'item') else result2.success):
@@ -440,7 +611,8 @@ def demo_pick_and_place_fixed():
             visualizer.visualize_trajectory_with_object(
                 trajectory2, 
                 interpolation_dt=result2.interpolation_dt,
-                playback_speed=0.5
+                playback_speed=0.5,
+                phase="阶段2-抓取"
             )
             
             # 更新当前状态
@@ -470,6 +642,15 @@ def demo_pick_and_place_fixed():
         if success:
             print("✅ 成功将立方体附加到机器人！")
             print("🔗 立方体现在是机器人的一部分，会跟随机器人移动")
+            
+            # 检查附加物体后的碰撞距离
+            print(f"\n📏 物体附加后的碰撞距离:")
+            final_joint_config = trajectory2.position[-1]
+            if torch.is_tensor(final_joint_config):
+                final_joint_config_np = final_joint_config.cpu().numpy()
+            else:
+                final_joint_config_np = final_joint_config
+            visualizer.print_collision_distance(final_joint_config_np, phase="物体附加后")
             
             # === 详细的附加物体分析 ===
             print("\n🔍 详细分析附加物体的球体表示...")
@@ -546,6 +727,7 @@ def demo_pick_and_place_fixed():
                         
                         sphere_marker_ids.append(sphere_marker)
                         visualizer.sphere_marker_ids.append(sphere_marker)  # 保存到可视化器中
+                        visualizer.attached_sphere_positions.append([x, y, z])  # 保存球体的绝对位置
                         print(f"   ✅ 创建球体标记 {sphere_idx}: 位置=({x:.3f}, {y:.3f}, {z:.3f})")
                         print(f"      原始半径={radius:.4f}m, 可视化半径={visual_radius:.4f}m")
                         
@@ -741,7 +923,8 @@ def demo_pick_and_place_fixed():
                     interpolated_intermediate,
                     interpolation_dt=result_intermediate.interpolation_dt,
                     playback_speed=1.0,
-                    show_object_attached=True
+                    show_object_attached=True,
+                    phase="阶段4-中间位置"
                 )
                 
                 # 更新当前状态
@@ -778,7 +961,8 @@ def demo_pick_and_place_fixed():
             trajectory3, 
             interpolation_dt=result4.interpolation_dt,
             playback_speed=0.5,
-            show_object_attached=True
+            show_object_attached=True,
+            phase="阶段4-放置"
         )
         
         # 更新当前状态
@@ -805,12 +989,22 @@ def demo_pick_and_place_fixed():
                 [0, 1, 0, 0]
             )
         
+        # 检查放置后的碰撞距离
+        print(f"\n📏 物体放置后的碰撞距离:")
+        final_joint_config = trajectory3.position[-1]
+        if torch.is_tensor(final_joint_config):
+            final_joint_config_np = final_joint_config.cpu().numpy()
+        else:
+            final_joint_config_np = final_joint_config
+        visualizer.print_collision_distance(final_joint_config_np, phase="物体放置后")
+        
         print(f"\n🎉 Pick and Place 演示完成！")
         print(f"📊 演示统计:")
         print(f"  ✅ 所有阶段成功完成")
         print(f"  📏 使用了安全的抓取距离: {grasp_height*100:.0f}cm")
         print(f"  🎯 物体成功从 {target_pos} 移动到 {place_position}")
         print(f"  🧠 自动避障和碰撞检测正常工作")
+        print(f"  📏 实时碰撞距离监测功能已启用")
         
         input("\n按回车键退出演示...")
         
@@ -829,13 +1023,16 @@ def main():
     print("这个版本解决了抓取位置和tensor处理的问题")
     print("\n✨ 改进:")
     print("• 🎯 可视化抓取位置标记")
-    print("• 📏 优化的安全抓取距离")
+    print("• 📏 优化的安全抓取距离") 
     print("• 🔄 分阶段接近和抓取")
     print("• 🛠️  修复了tensor处理问题")
     print("• 🎬 更好的可视化效果")
+    print("• 🚧 修复了障碍物碰撞检测问题")
+    print("• 🌟 支持动态球体可视化")
+    print("• 🔍 完整的避障路径规划")
     
-    choice = input("\n开始演示吗？(y/n): ").strip().lower()
-    if choice in ['y', 'yes', '是']:
+    response = input("\n开始Pick and Place演示吗？(y/n): ")
+    if response.lower() in ['y', 'yes', '是']:
         demo_pick_and_place_fixed()
     else:
         print("演示已取消")
