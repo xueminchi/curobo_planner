@@ -368,12 +368,12 @@ class PickAndPlaceVisualizerFixed(PyBulletKinematicsVisualizer):
             print(f"\n⏹️  轨迹播放被中断")
     
     def _update_sphere_markers(self, joint_config):
-        """更新球体标记位置 - 修复版本"""
+        """更新球体标记位置 - 简化版本"""
         if len(self.sphere_marker_ids) == 0:
             return
             
         try:
-            # 获取当前末端执行器位置和姿态
+            # 获取当前末端执行器位置
             extended_config = self._extend_joint_configuration(joint_config)
             self.set_joint_angles(extended_config)
             ee_pos, ee_quat = self.get_end_effector_pose()
@@ -381,35 +381,33 @@ class PickAndPlaceVisualizerFixed(PyBulletKinematicsVisualizer):
             if ee_pos is None:
                 return
                 
-            # 如果是第一次更新，计算并保存球体相对于末端执行器的变换
-            if len(self.ee_to_sphere_transforms) == 0 and len(self.attached_sphere_positions) > 0:
-                # 获取初始末端执行器的逆变换
-                ee_rot_matrix = p.getMatrixFromQuaternion(ee_quat)
-                ee_rot_matrix = np.array(ee_rot_matrix).reshape(3, 3)
-                ee_pos_array = np.array(ee_pos)
-                
-                self.ee_to_sphere_transforms = []
+            # 如果是第一次更新，计算并保存球体相对位置
+            if len(self.sphere_relative_positions) == 0 and len(self.attached_sphere_positions) > 0:
+                # 使用当前的末端执行器位置作为参考
+                initial_ee_pos = ee_pos
+                self.sphere_relative_positions = []
                 for abs_pos in self.attached_sphere_positions:
-                    # 计算球体在末端执行器坐标系中的位置
-                    abs_pos_array = np.array(abs_pos)
-                    relative_pos = ee_rot_matrix.T @ (abs_pos_array - ee_pos_array)
-                    self.ee_to_sphere_transforms.append(relative_pos)
-                print(f"💡 计算了 {len(self.ee_to_sphere_transforms)} 个球体的相对变换")
+                    relative_pos = [
+                        abs_pos[0] - initial_ee_pos[0],
+                        abs_pos[1] - initial_ee_pos[1], 
+                        abs_pos[2] - initial_ee_pos[2]
+                    ]
+                    self.sphere_relative_positions.append(relative_pos)
+                print(f"💡 计算了 {len(self.sphere_relative_positions)} 个球体的相对位置")
             
-            # 更新球体位置，考虑末端执行器的旋转
-            ee_rot_matrix = np.array(p.getMatrixFromQuaternion(ee_quat)).reshape(3, 3)
-            ee_pos_array = np.array(ee_pos)
-            
+            # 更新球体位置
             for i, sphere_id in enumerate(self.sphere_marker_ids):
-                if i < len(self.ee_to_sphere_transforms):
-                    # 应用末端执行器的变换到球体位置
-                    relative_pos = self.ee_to_sphere_transforms[i]
-                    new_pos = ee_pos_array + ee_rot_matrix @ relative_pos
-                    
+                if i < len(self.sphere_relative_positions):
+                    relative_pos = self.sphere_relative_positions[i]
+                    new_pos = [
+                        ee_pos[0] + relative_pos[0],
+                        ee_pos[1] + relative_pos[1],
+                        ee_pos[2] + relative_pos[2]
+                    ]
                     p.resetBasePositionAndOrientation(
                         sphere_id,
-                        new_pos.tolist(),
-                        [0, 0, 0, 1]  # 球体不需要旋转
+                        new_pos,
+                        [0, 0, 0, 1]
                     )
                     
         except Exception as e:
