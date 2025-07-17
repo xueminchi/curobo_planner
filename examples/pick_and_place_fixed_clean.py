@@ -65,20 +65,35 @@ class PickAndPlaceVisualizerFixed(PyBulletKinematicsVisualizer):
         self.tensor_args = TensorDeviceType()  # 添加tensor_args属性
         
     def setup_collision_checker(self, world_config):
-        robot_file = "franka.yml"
-        robot_cfg = load_yaml(join_path(get_robot_configs_path(), robot_file))["robot_cfg"]
-        robot_config = RobotConfig.from_dict(robot_cfg, self.tensor_args)
-        # 创建RobotWorld配置，用于碰撞检测
-        collision_config = RobotWorldConfig.load_from_config(
-            robot_config,
-            world_config,
-            collision_activation_distance=0.1,  # 使用1米的激活距离来获取距离信息
-            collision_checker_type=CollisionCheckerType.PRIMITIVE,
-            tensor_args=self.tensor_args,
-        )
-        # 创建碰撞检测器
-        self.collision_checker = RobotWorld(collision_config)
-
+        """设置碰撞检测器用于距离监测"""
+        print("🔧 初始化碰撞距离监测器...")
+        
+        try:
+            # 加载机器人配置
+            robot_file = "franka.yml"
+            robot_cfg = load_yaml(join_path(get_robot_configs_path(), robot_file))["robot_cfg"]
+            robot_config = RobotConfig.from_dict(robot_cfg, self.tensor_args)
+            
+            # 创建RobotWorld配置，用于碰撞检测
+            collision_config = RobotWorldConfig.load_from_config(
+                robot_config,
+                world_config,
+                collision_activation_distance=0.1,  # 使用1米的激活距离来获取距离信息
+                collision_checker_type=CollisionCheckerType.PRIMITIVE,
+                tensor_args=self.tensor_args,
+            )
+            
+            # 创建碰撞检测器
+            self.collision_checker = RobotWorld(collision_config)
+            print("✅ 碰撞距离监测器初始化成功")
+            print(f"   - 机器人配置: {robot_file}")
+            print(f"   - 碰撞检测器类型: PRIMITIVE")
+            print(f"   - 激活距离: 1.0m (用于获取距离信息)")
+            
+        except Exception as e:
+            print(f"❌ 碰撞距离监测器初始化失败: {e}")
+            self.collision_checker = None
+    
     def get_collision_distance(self, joint_positions):
         """获取机械臂与障碍物的最近距离"""
         if self.collision_checker is None:
@@ -169,11 +184,11 @@ class PickAndPlaceVisualizerFixed(PyBulletKinematicsVisualizer):
         
         # 创建障碍物 - 与CuRobo配置同步的高障碍物
         obstacles = [
-            {
-                "position": [-0.2, -0.3, 0.6],   # 与CuRobo world_config同步
-                "dims": [0.08, 0.08, 1.2],
-                "color": [0.2, 0.2, 0.8, 0.7]  # 蓝色
-            },
+            # {
+            #     "position": [-0.2, -0.3, 0.6],   # 与CuRobo world_config同步
+            #     "dims": [0.08, 0.08, 1.2],
+            #     "color": [0.2, 0.2, 0.8, 0.7]  # 蓝色
+            # },
             {
                 "position": [0.6, 0.0, 0.55],   # 与CuRobo world_config同步
                 "dims": [0.6, 0.1, 1.1],
@@ -303,7 +318,7 @@ class PickAndPlaceVisualizerFixed(PyBulletKinematicsVisualizer):
             print(f"📏 实时碰撞距离监测已启用")
         else:
             print(f"⚠️  碰撞距离监测未启用")
-
+        
         try:
             for i, joint_positions in enumerate(trajectory.position):
                 if hasattr(joint_positions, 'cpu'):
@@ -463,6 +478,7 @@ def demo_pick_and_place_fixed():
     
     try:
         # 显式更新motion_gen的世界配置以确保障碍物被正确加载
+        from curobo.geom.types import WorldConfig
         world_cfg = WorldConfig.from_dict(world_config)
         motion_gen.update_world(world_cfg)
         
@@ -500,22 +516,10 @@ def demo_pick_and_place_fixed():
             retract_cfg_np = retract_cfg
         visualizer.print_collision_distance(retract_cfg_np, phase="起始状态")
         
-        print(f"\n📝 优化的规划流程:")
-        print(f"1. 🚀 从起始位置移动到接近位置（安全距离）")
-        print(f"2. 🎯 从接近位置移动到抓取位置")
-        print(f"3. 🤏 抓取物体（附加到机器人）")
-        print(f"4. 🚚 移动到放置位置")
-        print(f"5. 📤 放置物体（从机器人分离）")
-        print(f"6. 🏠 返回起始位置")
-        
         # 验证碰撞检测设置
-        print(f"\n🔬 验证碰撞检测设置:")
         print(f"   - 碰撞检测器类型: {motion_gen_config.world_coll_checker.checker_type}")
-        print(f"   - 已加载世界配置到CuRobo运动规划器")
-        print(f"   - 碰撞距离监测已启用")
         
-        input("\n按回车键开始演示...")
-        
+
         # === 阶段1: 移动到接近位置 ===
         print(f"\n🚀 阶段1: 规划到接近位置...")
         approach_pose = Pose.from_list([
@@ -617,7 +621,6 @@ def demo_pick_and_place_fixed():
         
         if success:
             print("✅ 成功将立方体附加到机器人！")
-            print("🔗 立方体现在是机器人的一部分，会跟随机器人移动")
             
             # 检查附加物体后的碰撞距离
             print(f"\n📏 物体附加后的碰撞距离:")
@@ -627,10 +630,7 @@ def demo_pick_and_place_fixed():
             else:
                 final_joint_config_np = final_joint_config
             visualizer.print_collision_distance(final_joint_config_np, phase="物体附加后")
-            
-            # === 详细的附加物体分析 ===
-            print("\n🔍 详细分析附加物体的球体表示...")
-            
+                        
             # 获取附加对象的球体信息
             try:
                 attached_spheres = motion_gen.kinematics.kinematics_config.get_link_spheres("attached_object")
